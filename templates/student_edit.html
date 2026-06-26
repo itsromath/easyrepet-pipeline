@@ -22,6 +22,9 @@
     {% if saved %}
     <div class="notice wide">Сохранено.</div>
     {% endif %}
+    {% if has_pending_proposal %}
+    <div class="notice wide">Есть новое предложение для базы знаний. Проверьте изменения и сохраните только после подтверждения.</div>
+    {% endif %}
 
     <section class="panel">
         <h2>Текущая карточка</h2>

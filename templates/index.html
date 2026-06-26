@@ -15,6 +15,11 @@
     </a>
     <nav class="top-actions" aria-label="Навигация">
         <a class="button secondary" href="{{ url_for('students') }}">Ученики</a>
+        <form action="{{ url_for('test_mode') }}" method="post" class="top-toggle-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="enabled" value="{{ '0' if test_mode else '1' }}">
+            <button class="test-mode-toggle {% if test_mode %}is-active{% endif %}" type="submit">Тестовый режим</button>
+        </form>
     </nav>
 </header>
 
@@ -109,6 +114,13 @@
                 <span>Сразу создать отчёт после транскрипции</span>
             </label>
 
+            {% if test_mode %}
+            <label class="checkbox">
+                <input type="checkbox" name="create_test_student" checked>
+                <span>Создать нового тестового ученика и черновик базы знаний</span>
+            </label>
+            {% endif %}
+
             <label class="checkbox">
                 <input type="checkbox" name="force">
                 <span>Перегенерировать отчёт, если он уже есть</span>
@@ -178,6 +190,13 @@
                 <span>Перегенерировать готовые отчёты</span>
             </label>
 
+            {% if test_mode %}
+            <label class="checkbox">
+                <input type="checkbox" name="create_test_student" checked>
+                <span>Создать нового тестового ученика для каждого отчета</span>
+            </label>
+            {% endif %}
+
             <button type="submit" data-requires-analyze {% if task.running or not task.can_analyze %}disabled{% endif %}>Создать отчёт</button>
         </form>
     </section>
@@ -235,6 +254,14 @@
                             <div class="row-actions">
                                 <a class="button tiny secondary" href="{{ url_for('view_output', folder=folder.name, filename=file.name) }}">Смотреть</a>
                                 <a class="button tiny" href="{{ url_for('edit_report', folder=folder.name, filename=file.name) }}">Редактировать</a>
+                                {% if test_mode %}
+                                <form action="{{ url_for('create_test_student_from_report') }}" method="post" class="row-action-form">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <input type="hidden" name="folder" value="{{ folder.name }}">
+                                    <input type="hidden" name="filename" value="{{ file.name }}">
+                                    <button class="tiny secondary" type="submit" {% if task.running or not task.can_analyze %}disabled{% endif %}>База</button>
+                                </form>
+                                {% endif %}
                             </div>
                         </td>
                     </tr>

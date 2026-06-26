@@ -4,7 +4,7 @@ import re
 import time
 from copy import deepcopy
 from pathlib import Path
-from typing import Callable, Dict, Iterable, List
+from typing import Callable, Dict, Iterable, List, Optional
 
 import yaml
 
@@ -500,7 +500,7 @@ class LessonPipeline:
             "llm_transcript": lesson_dir / f"{stem}_llm_transcript.txt",
         }
 
-    def process_file(self, transcript_path: Path, *, force: bool = False) -> None:
+    def process_file(self, transcript_path: Path, *, force: bool = False) -> Optional[Path]:
         output_paths = self.get_output_paths(transcript_path)
         final_path = output_paths["final"]
 
@@ -512,7 +512,7 @@ class LessonPipeline:
                 f"Файл уже обработан: {transcript_path.name}",
                 "pipeline",
             )
-            return
+            return final_path
 
         logging.info("Обрабатываю транскрипт: %s", transcript_path)
         self.emit_progress(
@@ -532,7 +532,7 @@ class LessonPipeline:
                 f"Пустой транскрипт пропущен: {transcript_path.name}",
                 "pipeline",
             )
-            return
+            return None
 
         llm_transcript = build_llm_transcript(transcript_path, transcript, self.transcript_cleaning)
         if not llm_transcript.strip():
@@ -584,7 +584,10 @@ class LessonPipeline:
             review=review,
         )
         output_paths["final"].write_text(final_report, encoding="utf-8")
+        final_report_path = output_paths["final"]
         logging.info("Финальный отчёт сохранён: %s", output_paths["final"])
+
+        return final_report_path
 
     def make_summary(self, transcript: str) -> str:
         """

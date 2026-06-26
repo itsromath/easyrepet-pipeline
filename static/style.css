@@ -106,6 +106,24 @@ body {
     align-items: center;
 }
 
+.top-toggle-form,
+.row-action-form {
+    margin: 0;
+}
+
+.test-mode-toggle {
+    background: #ffffff;
+    color: var(--warning);
+    border-color: #dec797;
+}
+
+.test-mode-toggle:hover,
+.test-mode-toggle.is-active {
+    background: #f7eddc;
+    color: #6f4810;
+    border-color: #c9a45c;
+}
+
 h1, h2, h3 { margin: 0; }
 
 h1 {

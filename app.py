@@ -16,7 +16,7 @@ from flask import jsonify
 import requests
 import yaml
 
-from llm_client import load_model_preset
+from llm_client import call_lmstudio_chat, load_model_preset
 from pipeline import LessonPipeline, dump_config, load_config, merge_config, DEFAULT_CONFIG, setup_logging
 from prepare_anythingllm_transcript import (
     extract_segments,
@@ -160,6 +160,21 @@ def ensure_students_dir() -> Path:
     students_dir = get_paths()["students"]
     students_dir.mkdir(parents=True, exist_ok=True)
     return students_dir
+
+
+def ensure_student_proposals_dir() -> Path:
+    proposals_dir = ensure_students_dir() / "_proposals"
+    proposals_dir.mkdir(parents=True, exist_ok=True)
+    return proposals_dir
+
+
+def proposal_path_for_student(filename: str) -> Path:
+    filename = safe_student_name(filename)
+    return ensure_student_proposals_dir() / filename
+
+
+def is_test_mode_enabled() -> bool:
+    return session.get("test_mode") == "1"
 
 
 def safe_name(name: str) -> str:
@@ -685,6 +700,7 @@ def run_audio_transcription(
     output_name: str,
     process_after: bool,
     force: bool,
+    create_test_student: bool = False,
 ) -> None:
     audio_path = Path(audio_path_text)
     output_stem = safe_transcript_stem(output_name) if output_name else short_transcript_stem(audio_path.stem)
@@ -770,9 +786,12 @@ def run_audio_transcription(
                     "stage_label": "Подготовка отчёта",
                     "stage_detail": md_path.name,
                     "service": "pipeline",
-                })
+            })
             pipeline = make_pipeline(make_task_progress_callback(md_path.name))
-            pipeline.process_file(md_path, force=force)
+            final_path = pipeline.process_file(md_path, force=force)
+            if create_test_student and final_path and final_path.exists():
+                student_path = create_test_student_proposal(md_path.name, final_path)
+                status += f"; тестовый ученик: {student_path.stem}"
             status += "; отчёт создан"
 
         with task_lock:
@@ -805,6 +824,106 @@ def safe_student_name(name: str) -> str:
     if not stem:
         stem = "student"
     return f"{safe_name(stem)}.md"
+
+
+def next_test_student_number() -> int:
+    students_dir = ensure_students_dir()
+    max_number = 0
+    for path in students_dir.glob("*.md"):
+        match = re.match(r"^Тестовый ученик\s+(\d+)", path.stem, flags=re.IGNORECASE)
+        if match:
+            max_number = max(max_number, int(match.group(1)))
+    return max_number + 1
+
+
+def test_student_name_for_source(source_name: str) -> str:
+    hint = short_transcript_stem(source_name, max_words=3).replace("_", " ")
+    number = next_test_student_number()
+    return f"Тестовый ученик {number:03d} - {hint}"
+
+
+def build_initial_test_student_card(student_name: str, source_name: str, report_path: Path | None = None) -> str:
+    report_line = f"- Первый отчет: {report_path.name}" if report_path else "- Первый отчет: ожидает создания"
+    return f"""# {student_name}
+
+## Служебно
+
+- Тип: тестовый ученик
+- Источник: {source_name}
+{report_line}
+- Создано: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+
+## Что важно знать
+
+Ожидает предложенного обновления по отчету. После генерации педагог проверяет diff и сохраняет только подтвержденную версию.
+
+## Темы и навыки
+
+## Самостоятельность
+
+## Что дается легко
+
+## Что дается сложно
+
+## Реакция на подсказки
+
+## Рекомендации для следующего занятия
+"""
+
+
+def create_test_student_card(source_name: str, report_path: Path | None = None) -> Path:
+    students_dir = ensure_students_dir()
+    student_name = test_student_name_for_source(source_name)
+    filename = safe_student_name(student_name)
+    path = students_dir / filename
+    while path.exists():
+        student_name = test_student_name_for_source(source_name)
+        filename = safe_student_name(student_name)
+        path = students_dir / filename
+    write_markdown(path, build_initial_test_student_card(student_name, source_name, report_path))
+    return path
+
+
+def generate_student_knowledge_proposal(student_path: Path, report_path: Path) -> str:
+    config = load_config(CONFIG_PATH)
+    llm_config = config.get("llm", {})
+    current_card = read_markdown(student_path) if student_path.exists() else ""
+    report = clean_teacher_report(read_markdown(report_path))
+    user_prompt = f"""# Текущая база ученика
+
+{current_card}
+
+# Отчет по занятию
+
+{report}
+
+Создай предложенную новую версию базы ученика. Верни только полный Markdown новой карточки.
+"""
+    proposed = call_lmstudio_chat(
+        "student_knowledge_9b",
+        user_prompt,
+        base_url=str(llm_config.get("base_url", "http://127.0.0.1:1234/v1")),
+        api_key=str(llm_config.get("api_key", "local-key")),
+        timeout=900,
+    )
+    proposed = proposed.strip()
+    if len(proposed) < 200 or "# " not in proposed:
+        raise RuntimeError("LLM вернула пустое или слишком короткое предложение для базы ученика.")
+    return proposed
+
+
+def create_test_student_proposal(source_name: str, report_path: Path) -> Path:
+    student_path = create_test_student_card(source_name, report_path)
+    update_task_stage(
+        "llm_9b",
+        "LLM 9B",
+        f"Готовит предложение для базы: {student_path.stem}",
+        "lmstudio",
+        workflow="report",
+    )
+    proposed = generate_student_knowledge_proposal(student_path, report_path)
+    proposal_path_for_student(student_path.name).write_text(proposed + "\n", encoding="utf-8")
+    return student_path
 
 
 def output_file_path(folder: str, filename: str) -> Path:
@@ -853,7 +972,7 @@ def read_log_tail(limit: int = 300) -> str:
     return "\n".join(content.splitlines()[-limit:])
 
 
-def run_processing(target_file: Optional[str], force: bool) -> None:
+def run_processing(target_file: Optional[str], force: bool, create_test_student: bool = False) -> None:
     with task_lock:
         apply_task_update({
             "running": True,
@@ -878,12 +997,17 @@ def run_processing(target_file: Optional[str], force: bool) -> None:
             with task_lock:
                 current_task["status"] = f"Обрабатывается файл: {transcript_path.name}"
                 current_task["stage_detail"] = transcript_path.name
-            pipeline.process_file(transcript_path, force=force)
+            final_path = pipeline.process_file(transcript_path, force=force)
+            if create_test_student and final_path and final_path.exists():
+                create_test_student_proposal(transcript_path.name, final_path)
         else:
             with task_lock:
                 current_task["status"] = "Обрабатываются все новые транскрипты"
                 current_task["stage_detail"] = "Все новые транскрипты"
-            pipeline.process_new_files(force=force)
+            for transcript_path in pipeline.iter_transcripts():
+                final_path = pipeline.process_file(transcript_path, force=force)
+                if create_test_student and final_path and final_path.exists():
+                    create_test_student_proposal(transcript_path.name, final_path)
 
         with task_lock:
             apply_task_update({
@@ -1014,12 +1138,19 @@ def index():
         transcript_order=transcript_order,
         task=task_snapshot(),
         config_text=config_text,
+        test_mode=is_test_mode_enabled(),
     )
 
 
 @app.route("/favicon.ico")
 def favicon():
     return app.send_static_file("favicon.svg")
+
+
+@app.route("/test_mode", methods=["POST"])
+def test_mode():
+    session["test_mode"] = "1" if request.form.get("enabled") == "1" else "0"
+    return redirect(url_for("index"))
 
 
 @app.route("/upload", methods=["POST"])
@@ -1046,6 +1177,11 @@ def transcribe_audio_route():
             return redirect(url_for("index"))
 
     process_after = request.form.get("process_after") == "on"
+    create_test_student = (
+        is_test_mode_enabled()
+        and process_after
+        and request.form.get("create_test_student") == "on"
+    )
     readiness = build_readiness_snapshot(force=True)
     if process_after and not can_analyze(readiness):
         block_task(
@@ -1105,7 +1241,7 @@ def transcribe_audio_route():
 
     thread = threading.Thread(
         target=run_audio_transcription,
-        args=(str(audio_path), output_name, process_after, force),
+        args=(str(audio_path), output_name, process_after, force, create_test_student),
         daemon=True,
     )
     thread.start()
@@ -1116,6 +1252,10 @@ def transcribe_audio_route():
 def process():
     target_file = request.form.get("target_file") or None
     force = request.form.get("force") == "on"
+    create_test_student = (
+        is_test_mode_enabled()
+        and request.form.get("create_test_student") == "on"
+    )
 
     with task_lock:
         if current_task.get("running"):
@@ -1131,9 +1271,43 @@ def process():
         )
         return redirect(url_for("index"))
 
-    thread = threading.Thread(target=run_processing, args=(target_file, force), daemon=True)
+    thread = threading.Thread(target=run_processing, args=(target_file, force, create_test_student), daemon=True)
     thread.start()
     return redirect(url_for("index"))
+
+
+@app.route("/create_test_student_from_report", methods=["POST"])
+def create_test_student_from_report():
+    folder = safe_name(request.form.get("folder", ""))
+    filename = safe_name(request.form.get("filename", ""))
+    path = output_file_path(folder, filename)
+    if not path.exists() or not path.is_file() or not filename.endswith("_final.md"):
+        return redirect(url_for("index") + "#final-reports")
+
+    readiness = build_readiness_snapshot(force=True)
+    if not can_analyze(readiness):
+        block_task(
+            "Не готово",
+            "LM Studio выключен или недоступен; предложение для базы ученика не создано.",
+            service="lmstudio",
+            workflow="report",
+        )
+        return redirect(url_for("index") + "#final-reports")
+
+    try:
+        student_path = create_test_student_proposal(folder, path)
+    except Exception as exc:
+        update_task_stage(
+            "error",
+            "Ошибка",
+            str(exc),
+            "lmstudio",
+            workflow="report",
+            error=str(exc),
+        )
+        return redirect(url_for("index") + "#final-reports")
+
+    return redirect(url_for("student_card", filename=student_path.name))
 
 
 @app.route("/import_anythingllm", methods=["POST"])
@@ -1394,7 +1568,10 @@ def student_card(filename: str):
         return redirect(url_for("student_card", filename=filename, saved="1"))
 
     content = read_markdown(path)
-    proposed = request.form.get("proposed", content)
+    pending_proposal_path = proposal_path_for_student(filename)
+    pending_proposal = read_markdown(pending_proposal_path) if pending_proposal_path.exists() else ""
+    has_pending_proposal = len(pending_proposal.strip()) >= 200
+    proposed = pending_proposal if has_pending_proposal else content
     return render_template(
         "student_edit.html",
         student_name=Path(filename).stem,
@@ -1403,6 +1580,7 @@ def student_card(filename: str):
         proposed=proposed,
         rendered_content=render_markdown(content),
         diff_html=None,
+        has_pending_proposal=has_pending_proposal,
         saved=request.args.get("saved") == "1",
     )
 
@@ -1413,6 +1591,8 @@ def student_diff(filename: str):
     path = ensure_students_dir() / filename
     old_content = read_markdown(path) if path.exists() else ""
     proposed = request.form.get("proposed", "")
+    pending_proposal_path = proposal_path_for_student(filename)
+    pending_proposal = read_markdown(pending_proposal_path) if pending_proposal_path.exists() else ""
     return render_template(
         "student_edit.html",
         student_name=Path(filename).stem,
@@ -1421,6 +1601,7 @@ def student_diff(filename: str):
         proposed=proposed,
         rendered_content=render_markdown(old_content),
         diff_html=build_html_diff(old_content, proposed),
+        has_pending_proposal=len(pending_proposal.strip()) >= 200,
         saved=False,
     )
 
@@ -1431,6 +1612,9 @@ def save_student_proposed(filename: str):
     path = ensure_students_dir() / filename
     proposed = request.form.get("proposed", "")
     write_markdown(path, proposed)
+    pending_proposal_path = proposal_path_for_student(filename)
+    if pending_proposal_path.exists():
+        pending_proposal_path.unlink()
     return redirect(url_for("student_card", filename=filename, saved="1"))
 
 
