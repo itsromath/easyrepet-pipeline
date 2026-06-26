@@ -1,0 +1,384 @@
+<!doctype html>
+<html lang="ru">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>EasyRepet Pipeline</title>
+    <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<header class="topbar">
+    <a class="brand" href="{{ url_for('index') }}" aria-label="EasyRepet Pipeline">
+        <span class="brand-mark">ER</span>
+        <span class="brand-title">EasyRepet</span>
+    </a>
+    <nav class="top-actions" aria-label="Навигация">
+        <a class="button secondary" href="{{ url_for('students') }}">Ученики</a>
+    </nav>
+</header>
+
+<main class="layout">
+    {% set outputs_list = outputs|default([]) %}
+    {% set transcripts_list = transcripts|default([]) %}
+    {% set students_list = students|default([]) %}
+    {% set recordings_list = anythingllm_recordings|default([]) %}
+    {% set downloads_list = download_audio_files|default([]) %}
+    {% set stage = task.stage|default("idle") %}
+
+    <section class="status-strip wide" aria-live="polite">
+        <div class="status-main">
+            <span id="stagePulse" class="stage-loader stage-{{ stage }}" aria-hidden="true"></span>
+            <div class="status-copy">
+                <span class="eyebrow">Статус</span>
+                <span
+                    id="stageLabel"
+                    class="stage-label {% if task.error %}status-error{% elif task.running %}status-running{% elif stage == 'done' %}status-ready{% else %}status-idle{% endif %}"
+                >{{ task.stage_label|default("Готово") }}</span>
+                <p id="statusText" class="status-text">{{ task.status }}</p>
+                <p id="stageDetail" class="status-detail">{{ task.stage_detail|default("") }}</p>
+                <p class="status-target">
+                    <strong>Цель:</strong>
+                    <span id="targetText">{{ task.target or "—" }}</span>
+                </p>
+                <p class="error" id="errorText">{{ task.error or "" }}</p>
+                <div class="workflow-block" aria-label="Этапы обработки">
+                    <ol class="workflow-steps" id="workflowSteps">
+                        <li class="workflow-step" data-step-id="whisper">
+                            <span class="step-dot"></span>
+                            <span>Whisper</span>
+                        </li>
+                        <li class="workflow-step" data-step-id="llm_4b">
+                            <span class="step-dot"></span>
+                            <span>LLM 4B</span>
+                        </li>
+                        <li class="workflow-step" data-step-id="llm_9b">
+                            <span class="step-dot"></span>
+                            <span>LLM 9B</span>
+                        </li>
+                    </ol>
+                </div>
+            </div>
+        </div>
+        <dl class="status-meta">
+            <div>
+                <dt>Запущено</dt>
+                <dd id="startedText">{{ task.started_display or "—" }}</dd>
+            </div>
+            <div>
+                <dt>Завершено</dt>
+                <dd id="finishedText">{{ task.finished_display or "—" }}</dd>
+            </div>
+            <div class="elapsed-card">
+                <dt>Прошло</dt>
+                <dd id="elapsedText">{{ task.elapsed_display or "—" }}</dd>
+            </div>
+        </dl>
+    </section>
+
+    <section class="step-card">
+        <div class="step-kicker">
+            <span class="step-number">1</span>
+            <span>Получить транскрипт</span>
+        </div>
+        <h2>Аудио через Speaches</h2>
+        <form action="/transcribe_audio" method="post" enctype="multipart/form-data" class="stack-form">
+            <label>
+                Файл из Downloads
+                <select name="audio_path" data-transcript-source="audio-select" data-target-output="audioOutputName">
+                    <option value="">Выбрать из списка или загрузить ниже</option>
+                    {% for item in downloads_list %}
+                    <option value="{{ item.path }}" data-source-name="{{ item.name }}">{{ item.modified }} · {{ item.name }} · {{ item.size }} байт</option>
+                    {% endfor %}
+                </select>
+            </label>
+
+            <label>
+                Выбрать файл
+                <input type="file" name="audio_file" accept=".mp3,.m4a,.mp4,.wav,.ogg,.opus,.flac,.webm,.aac,.mkv,audio/*,video/*" data-transcript-source="audio-file" data-target-output="audioOutputName">
+            </label>
+
+            <label>
+                Имя транскрипта
+                <input id="audioOutputName" type="text" name="output_name" placeholder="например: youtube_8_class_lesson_01" data-suggestion-target>
+            </label>
+
+            <label class="checkbox">
+                <input type="checkbox" name="process_after" checked data-process-after>
+                <span>Сразу создать отчёт после транскрипции</span>
+            </label>
+
+            <label class="checkbox">
+                <input type="checkbox" name="force">
+                <span>Перегенерировать отчёт, если он уже есть</span>
+            </label>
+
+            <button type="submit" data-audio-submit data-requires-transcribe {% if task.running or not task.can_transcribe or not task.can_analyze %}disabled{% endif %}>Транскрибировать</button>
+        </form>
+        {% if whisper_config is defined %}
+        <p class="hint">Speaches: {{ whisper_config.get("model", "модель не указана") }} · {{ whisper_config.get("base_url", "URL не указан") }}</p>
+        {% else %}
+        <p class="hint">Speaches: настройки появятся после перезапуска сервера.</p>
+        {% endif %}
+
+        <details class="soft-details">
+            <summary>Загрузить готовый транскрипт</summary>
+            <form action="{{ url_for('upload') }}" method="post" enctype="multipart/form-data" class="inline-form">
+                <input type="file" name="file" accept=".txt,.md,.json" required>
+                <button class="secondary" type="submit">Загрузить</button>
+            </form>
+            <p class="hint">Поддерживаются .txt, .md, .json.</p>
+        </details>
+    </section>
+
+    <section class="step-card">
+        <div class="step-kicker">
+            <span class="step-number">2</span>
+            <span>Создать основу</span>
+        </div>
+        <h2>Компактная транскрипция</h2>
+        <form action="{{ url_for('import_anythingllm') }}" method="post" class="stack-form">
+            <label>
+                Запись AnythingLLM
+                <select name="recording_id" required data-transcript-source="anythingllm-select" data-target-output="anythingOutputName">
+                    {% for item in recordings_list %}
+                    <option value="{{ item.id }}" data-source-name="{{ item.id }}">{{ item.modified }} · {{ item.id }}</option>
+                    {% endfor %}
+                </select>
+            </label>
+
+            <label>
+                Имя файла
+                <input id="anythingOutputName" type="text" name="output_name" placeholder="например: lesson_001" data-suggestion-target>
+            </label>
+
+            <button type="submit" {% if task.running or not recordings_list %}disabled{% endif %}>Создать компактную транскрипцию</button>
+        </form>
+
+        <hr class="panel-divider">
+
+        <h2>Отчёт по транскрипту</h2>
+        <form action="{{ url_for('process') }}" method="post" class="stack-form">
+            <label>
+                Файл
+                <select name="target_file">
+                    <option value="">Все новые транскрипты</option>
+                    {% for item in transcripts_list %}
+                    <option value="{{ item.name }}">{{ item.name }}</option>
+                    {% endfor %}
+                </select>
+            </label>
+
+            <label class="checkbox">
+                <input type="checkbox" name="force">
+                <span>Перегенерировать готовые отчёты</span>
+            </label>
+
+            <button type="submit" data-requires-analyze {% if task.running or not task.can_analyze %}disabled{% endif %}>Создать отчёт</button>
+        </form>
+    </section>
+
+    <section class="step-card">
+        <div class="step-kicker">
+            <span class="step-number">3</span>
+            <span>Проверить и сохранить</span>
+        </div>
+        <h2>Финальная ручная правка</h2>
+        <div class="quick-stats">
+            <a class="quick-stat" href="#final-reports">
+                <span>{{ outputs_list|length }}</span>
+                <small>папок с результатами</small>
+            </a>
+            <a class="quick-stat" href="#student-cards">
+                <span>{{ students_list|length }}</span>
+                <small>карточек учеников</small>
+            </a>
+            <a class="quick-stat" href="#transcripts">
+                <span>{{ transcripts_list|length }}</span>
+                <small>транскриптов</small>
+            </a>
+        </div>
+        <div class="action-row">
+            <a class="button" href="#final-reports">К отчётам</a>
+            <a class="button secondary" href="{{ url_for('students') }}">Открыть базу</a>
+        </div>
+    </section>
+
+    <section class="panel wide" id="final-reports">
+        <div class="section-heading">
+            <h2>Финальный отчёт</h2>
+        </div>
+        {% set ns = namespace(has_final=false) %}
+        <div class="table-wrap">
+            <table class="report-table">
+                <thead>
+                <tr>
+                    <th>Занятие</th>
+                    <th>Отчёт</th>
+                    <th>Дата</th>
+                    <th class="actions-cell">Действия</th>
+                </tr>
+                </thead>
+                <tbody>
+                {% for folder in outputs_list %}
+                    {% for file in folder.final_files %}
+                    {% set ns.has_final = true %}
+                    <tr>
+                        <td class="strong-cell">{{ folder.name }}</td>
+                        <td>{{ file.name }}</td>
+                        <td class="muted-cell">{{ file.modified }}</td>
+                        <td>
+                            <div class="row-actions">
+                                <a class="button tiny secondary" href="{{ url_for('view_output', folder=folder.name, filename=file.name) }}">Смотреть</a>
+                                <a class="button tiny" href="{{ url_for('edit_report', folder=folder.name, filename=file.name) }}">Редактировать</a>
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                {% endfor %}
+                {% if not ns.has_final %}
+                <tr>
+                    <td colspan="4" class="empty-cell">Пока нет финальных отчётов.</td>
+                </tr>
+                {% endif %}
+                </tbody>
+            </table>
+        </div>
+    </section>
+
+    <section class="panel wide" id="student-cards">
+        <div class="section-heading">
+            <h2>База учеников</h2>
+            <a class="button tiny secondary" href="{{ url_for('students') }}">Открыть базу</a>
+        </div>
+        {% if students_list %}
+        <div class="student-grid">
+            {% for student in students_list %}
+            <a class="student-link" href="{{ url_for('student_card', filename=student.filename) }}">
+                <strong>{{ student.name }}</strong>
+            </a>
+            {% endfor %}
+        </div>
+        {% else %}
+        <p class="hint">Карточки учеников пока не созданы.</p>
+        {% endif %}
+    </section>
+
+    <section class="panel wide tech-panel">
+        <div class="section-heading">
+            <h2>Технический режим</h2>
+        </div>
+
+        <details class="tech-section" id="work-files">
+            <summary>Рабочие файлы</summary>
+            {% if outputs_list %}
+                {% set files_ns = namespace(has_work=false) %}
+                {% for folder in outputs_list %}
+                {% if folder.work_files %}
+                {% set files_ns.has_work = true %}
+                <details class="output-folder">
+                    <summary>
+                        <span>{{ folder.name }}</span>
+                        <small>{{ folder.work_files|length }} файлов</small>
+                    </summary>
+                    <form
+                        action="{{ url_for('delete_output_files') }}"
+                        method="post"
+                        class="work-files-form"
+                        onsubmit="return confirm('Удалить выбранные рабочие файлы?');"
+                    >
+                        <input type="hidden" name="folder" value="{{ folder.name }}">
+                        <div class="work-file-list">
+                            {% for file in folder.work_files %}
+                            <div class="work-file-item">
+                                <input type="checkbox" name="filename" value="{{ file.name }}" aria-label="Выбрать {{ file.name }}">
+                                <a href="{{ url_for('view_output', folder=folder.name, filename=file.name) }}">{{ file.name }}</a>
+                                <span>{{ file.modified }}</span>
+                            </div>
+                            {% endfor %}
+                        </div>
+                        <div class="work-file-actions">
+                            <button class="small danger" type="submit">Удалить выбранные</button>
+                        </div>
+                    </form>
+                    <form
+                        action="{{ url_for('delete_output_folder') }}"
+                        method="post"
+                        class="folder-delete-form"
+                        onsubmit="return confirm('Удалить всю папку результата вместе с финальным отчётом и рабочими файлами?');"
+                    >
+                        <input type="hidden" name="folder" value="{{ folder.name }}">
+                        <button class="small danger" type="submit">Удалить всю папку</button>
+                    </form>
+                </details>
+                {% endif %}
+                {% endfor %}
+                {% if not files_ns.has_work %}
+                <p class="hint">Рабочих файлов пока нет.</p>
+                {% endif %}
+            {% else %}
+            <p class="hint">Пока нет результатов.</p>
+            {% endif %}
+        </details>
+
+        <details class="tech-section">
+            <summary>Транскрипты</summary>
+            {% if transcripts_list %}
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                    <tr>
+                        <th>Файл</th>
+                        <th>Размер</th>
+                        <th>
+                            <a class="sort-link" href="{{ url_for('index', transcript_order='asc' if transcript_order == 'desc' else 'desc') }}#transcripts">
+                                Изменён {% if transcript_order == "desc" %}↓{% else %}↑{% endif %}
+                            </a>
+                        </th>
+                        <th class="actions-cell"></th>
+                    </tr>
+                    </thead>
+                    <tbody id="transcripts">
+                    {% for item in transcripts_list %}
+                    <tr>
+                        <td class="strong-cell">
+                            <a class="table-link" href="{{ url_for('view_transcript', filename=item.name) }}">{{ item.name }}</a>
+                        </td>
+                        <td class="muted-cell">{{ item.size }} байт</td>
+                        <td class="muted-cell">{{ item.modified }}</td>
+                        <td>
+                            <form action="{{ url_for('delete_transcript') }}" method="post">
+                                <input type="hidden" name="filename" value="{{ item.name }}">
+                                <button class="small danger" type="submit">Удалить</button>
+                            </form>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <p class="hint">Пока нет транскриптов.</p>
+            {% endif %}
+        </details>
+
+        <details class="tech-section">
+            <summary>config.yaml</summary>
+            <form action="{{ url_for('save_config') }}" method="post" class="stack-form config-form">
+                <textarea name="config_text" spellcheck="false">{{ config_text }}</textarea>
+                <div class="form-actions">
+                    <button class="secondary" type="submit">Сохранить config.yaml</button>
+                </div>
+            </form>
+        </details>
+    </section>
+</main>
+
+<footer class="site-footer">
+    <p>EasyRepet сделан Романом для подготовки отчётов по занятиям.</p>
+    <p>Собрано вместе с Codex и GPT-5, режим medium-extra high · <a href="https://t.me/" target="_blank" rel="noopener">ТГ Роман</a></p>
+</footer>
+
+<script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>

@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="ru">
+<head>
+    <meta charset="utf-8">
+    <title>Ученики</title>
+    <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<header class="topbar">
+    <div>
+        <h1>Ученики</h1>
+        <p>Markdown-карточки, которые можно редактировать вручную</p>
+    </div>
+    <a class="button secondary" href="{{ url_for('index') }}">Назад</a>
+</header>
+
+<main class="single">
+    <section class="panel">
+        <h2>Новая карточка</h2>
+        <form action="{{ url_for('students') }}" method="post" class="inline-form">
+            <input type="text" name="student_name" placeholder="Имя ученика" required>
+            <button type="submit">Создать</button>
+        </form>
+    </section>
+
+    <section class="panel">
+        <h2>Список учеников</h2>
+        {% if students %}
+        <div class="student-grid">
+            {% for student in students %}
+            <a class="student-link" href="{{ url_for('student_card', filename=student.filename) }}">
+                <strong>{{ student.name }}</strong>
+                <span>{{ student.modified }}</span>
+            </a>
+            {% endfor %}
+        </div>
+        {% else %}
+        <p class="hint">Карточек пока нет.</p>
+        {% endif %}
+    </section>
+</main>
+</body>
+</html>

@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="ru">
+<head>
+    <meta charset="utf-8">
+    <title>{{ title }}</title>
+    <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<header class="topbar">
+    <div>
+        <h1>{{ title }}</h1>
+        <p>Разделы можно раскрывать, править и сохранять обратно в итоговый Markdown</p>
+    </div>
+    <nav class="top-actions">
+        <a class="button secondary" href="{{ url_for('view_output', folder=folder, filename=filename) }}">Просмотр</a>
+        <a class="button secondary" href="{{ url_for('index') }}">Назад</a>
+    </nav>
+</header>
+
+<main class="single">
+    {% if saved %}
+    <div class="notice">Сохранено.</div>
+    {% endif %}
+    <form action="{{ url_for('edit_report', folder=folder, filename=filename) }}" method="post" class="editor-form">
+        {% for section in sections %}
+        <details class="editor-section" open>
+            <summary>
+                <span>{{ section.title }}</span>
+                <small>H{{ section.level }}</small>
+            </summary>
+            <div class="section-controls">
+                <label>
+                    Заголовок
+                    <input type="text" name="title" value="{{ section.title }}">
+                </label>
+                <label>
+                    Уровень
+                    <select name="level">
+                        {% for level in ["1", "2", "3"] %}
+                        <option value="{{ level }}" {% if section.level == level %}selected{% endif %}>H{{ level }}</option>
+                        {% endfor %}
+                    </select>
+                </label>
+            </div>
+            <textarea name="body" spellcheck="true">{{ section.body }}</textarea>
+        </details>
+        {% endfor %}
+        <div class="sticky-actions">
+            <button type="submit">Сохранить отчет</button>
+        </div>
+    </form>
+</main>
+</body>
+</html>

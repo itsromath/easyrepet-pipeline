@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="ru">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{ title }}</title>
+    <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    {% if not is_log|default(false) %}
+    <script>
+        window.MathJax = {
+            tex: {
+                inlineMath: [["\\(", "\\)"], ["$", "$"]],
+                displayMath: [["\\[", "\\]"], ["$$", "$$"]],
+                processEscapes: true,
+                tags: "ams"
+            },
+            options: {
+                skipHtmlTags: ["script", "noscript", "style", "textarea", "pre", "code"]
+            },
+            startup: {
+                typeset: false
+            }
+        };
+    </script>
+    <script defer src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"></script>
+    {% endif %}
+</head>
+<body>
+<header class="topbar">
+    <div class="page-title-block">
+        <h1>{{ page_title|default(title) }}</h1>
+        {% if page_subtitle is defined and page_subtitle %}
+        <p>{{ page_subtitle }}</p>
+        {% endif %}
+    </div>
+    <nav class="top-actions">
+        {% if is_log|default(false) %}
+        <button class="secondary" type="button" id="refreshLogsButton">Обновить</button>
+        {% endif %}
+        {% if can_edit %}
+        <a class="button" href="{{ url_for('edit_report', folder=folder, filename=filename) }}">Редактировать</a>
+        {% endif %}
+        <a class="button secondary" href="{{ url_for('index') }}">Назад</a>
+    </nav>
+</header>
+
+<main class="single">
+    <article class="document-shell">
+        <div class="markdown-body">{{ rendered_content|safe }}</div>
+    </article>
+</main>
+
+{% if is_log|default(false) %}
+<script src="{{ url_for('static', filename='app.js') }}"></script>
+{% else %}
+<script>
+    window.addEventListener("load", () => {
+        if (window.MathJax && window.MathJax.typesetPromise) {
+            window.MathJax.typesetPromise();
+        }
+    });
+</script>
+{% endif %}
+</body>
+</html>

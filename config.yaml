@@ -1,0 +1,64 @@
+# EasyRepet MVP Pipeline
+# Транскрипт -> суммаризация -> проверка -> финальный отчёт
+
+llm:
+  base_url: "http://127.0.0.1:1234/v1"
+  api_key: "local-key"
+
+model_presets:
+  summarizer:
+    preset: "draft_4b"
+  reviewer:
+    preset: "final_9b"
+
+paths:
+  transcripts_dir: "transcripts"
+  outputs_dir: "outputs"
+  logs_dir: "logs"
+  audio_uploads_dir: "audio_uploads"
+
+transcript_cleaning:
+  enabled: true
+  remove_timestamps_for_llm: true
+  merge_segments: true
+  block_seconds: 180
+  keep_block_timestamps: true
+
+whisper:
+  base_url: "http://127.0.0.1:8000/v1"
+  model: "Systran/faster-whisper-large-v3"
+  language: "ru"
+  response_format: "verbose_json"
+  temperature: 0
+  vad_filter: true
+  timeout_seconds: 7200
+  ffmpeg_path: ""
+  ffprobe_path: ""
+  chunking:
+    enabled: true
+    chunk_seconds: 600
+  gap_repair:
+    enabled: false
+    min_gap_seconds: 90
+    padding_seconds: 5
+    max_repairs: 2
+    vad_filter: true
+  hallucination_filter:
+    enabled: true
+    max_compression_ratio: 4.0
+    max_consecutive_repeats: 1
+    min_repeated_chars: 12
+  short_repeat_filter:
+    enabled: true
+    short_segment_max_chars: 20
+    max_repeats: 2
+    drop_zero_duration_duplicates: true
+    min_segment_duration_seconds: 0.05
+    window_seconds: 2.0
+
+pipeline:
+  supported_extensions:
+    - ".txt"
+    - ".md"
+    - ".json"
+  skip_existing: true

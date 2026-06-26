@@ -1,0 +1,16 @@
+{
+  "draft_4b": {
+    "model": "qwen/qwen3-4b-2507",
+    "system_prompt_file": "prompts/draft_4b_system.txt",
+    "temperature": 0.25,
+    "top_p": 0.85,
+    "max_tokens": 4096
+  },
+  "final_9b": {
+    "model": "qwen/qwen3.5-9b",
+    "system_prompt_file": "prompts/final_9b_system.txt",
+    "temperature": 0.1,
+    "top_p": 0.95,
+    "max_tokens": 3000
+  }
+}
