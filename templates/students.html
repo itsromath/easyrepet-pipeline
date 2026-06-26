@@ -19,6 +19,7 @@
     <section class="panel">
         <h2>Новая карточка</h2>
         <form action="{{ url_for('students') }}" method="post" class="inline-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="text" name="student_name" placeholder="Имя ученика" required>
             <button type="submit">Создать</button>
         </form>

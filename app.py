@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
 import shutil
 import threading
 import html
@@ -10,7 +11,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, Optional
 
-from flask import Flask, redirect, render_template, request, url_for
+from flask import Flask, abort, redirect, render_template, request, session, url_for
 from flask import jsonify
 import requests
 import yaml
@@ -40,6 +41,7 @@ BASE_DIR = Path(__file__).resolve().parent
 CONFIG_PATH = BASE_DIR / "config.yaml"
 
 app = Flask(__name__)
+app.secret_key = os.environ.get("EASYREPET_SECRET_KEY") or secrets.token_hex(32)
 
 task_lock = threading.Lock()
 readiness_lock = threading.Lock()
@@ -62,6 +64,30 @@ current_task: Dict[str, object] = {
     "stage_seconds_stage": None,
     "error": None,
 }
+
+
+def csrf_token() -> str:
+    token = session.get("csrf_token")
+    if not token:
+        token = secrets.token_urlsafe(32)
+        session["csrf_token"] = token
+    return str(token)
+
+
+@app.context_processor
+def inject_csrf_token():
+    return {"csrf_token": csrf_token}
+
+
+@app.before_request
+def validate_csrf_token() -> None:
+    if request.method != "POST":
+        return
+
+    expected = session.get("csrf_token")
+    submitted = request.form.get("csrf_token")
+    if not expected or not submitted or not secrets.compare_digest(str(expected), str(submitted)):
+        abort(400, "Invalid CSRF token")
 
 NAME_STOP_WORDS = {
     "audio",

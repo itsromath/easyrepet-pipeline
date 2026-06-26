@@ -83,6 +83,7 @@
         </div>
         <h2>Аудио через Speaches</h2>
         <form action="/transcribe_audio" method="post" enctype="multipart/form-data" class="stack-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <label>
                 Файл из Downloads
                 <select name="audio_path" data-transcript-source="audio-select" data-target-output="audioOutputName">
@@ -124,6 +125,7 @@
         <details class="soft-details">
             <summary>Загрузить готовый транскрипт</summary>
             <form action="{{ url_for('upload') }}" method="post" enctype="multipart/form-data" class="inline-form">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <input type="file" name="file" accept=".txt,.md,.json" required>
                 <button class="secondary" type="submit">Загрузить</button>
             </form>
@@ -138,6 +140,7 @@
         </div>
         <h2>Компактная транскрипция</h2>
         <form action="{{ url_for('import_anythingllm') }}" method="post" class="stack-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <label>
                 Запись AnythingLLM
                 <select name="recording_id" required data-transcript-source="anythingllm-select" data-target-output="anythingOutputName">
@@ -159,6 +162,7 @@
 
         <h2>Отчёт по транскрипту</h2>
         <form action="{{ url_for('process') }}" method="post" class="stack-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <label>
                 Файл
                 <select name="target_file">
@@ -287,6 +291,7 @@
                         class="work-files-form"
                         onsubmit="return confirm('Удалить выбранные рабочие файлы?');"
                     >
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <input type="hidden" name="folder" value="{{ folder.name }}">
                         <div class="work-file-list">
                             {% for file in folder.work_files %}
@@ -307,6 +312,7 @@
                         class="folder-delete-form"
                         onsubmit="return confirm('Удалить всю папку результата вместе с финальным отчётом и рабочими файлами?');"
                     >
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <input type="hidden" name="folder" value="{{ folder.name }}">
                         <button class="small danger" type="submit">Удалить всю папку</button>
                     </form>
@@ -348,6 +354,7 @@
                         <td class="muted-cell">{{ item.modified }}</td>
                         <td>
                             <form action="{{ url_for('delete_transcript') }}" method="post">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                 <input type="hidden" name="filename" value="{{ item.name }}">
                                 <button class="small danger" type="submit">Удалить</button>
                             </form>
@@ -365,6 +372,7 @@
         <details class="tech-section">
             <summary>config.yaml</summary>
             <form action="{{ url_for('save_config') }}" method="post" class="stack-form config-form">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <textarea name="config_text" spellcheck="false">{{ config_text }}</textarea>
                 <div class="form-actions">
                     <button class="secondary" type="submit">Сохранить config.yaml</button>
