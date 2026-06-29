@@ -19,5 +19,12 @@
     "temperature": 0.1,
     "top_p": 0.9,
     "max_tokens": 5000
+  },
+  "student_knowledge_edit_9b": {
+    "model": "qwen/qwen3.5-9b",
+    "system_prompt_file": "prompts/student_knowledge_edit_9b_system.txt",
+    "temperature": 0.1,
+    "top_p": 0.9,
+    "max_tokens": 5000
   }
 }

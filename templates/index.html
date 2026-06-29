@@ -128,12 +128,6 @@
 
             <button type="submit" data-audio-submit data-requires-transcribe {% if task.running or not task.can_transcribe or not task.can_analyze %}disabled{% endif %}>Транскрибировать</button>
         </form>
-        {% if whisper_config is defined %}
-        <p class="hint">Speaches: {{ whisper_config.get("model", "модель не указана") }} · {{ whisper_config.get("base_url", "URL не указан") }}</p>
-        {% else %}
-        <p class="hint">Speaches: настройки появятся после перезапуска сервера.</p>
-        {% endif %}
-
         <details class="soft-details">
             <summary>Загрузить готовый транскрипт</summary>
             <form action="{{ url_for('upload') }}" method="post" enctype="multipart/form-data" class="inline-form">
@@ -285,9 +279,23 @@
         {% if students_list %}
         <div class="student-grid">
             {% for student in students_list %}
-            <a class="student-link" href="{{ url_for('student_card', filename=student.filename) }}">
-                <strong>{{ student.name }}</strong>
-            </a>
+            <div class="student-quick-item">
+                <a class="student-link" href="{{ url_for('student_card', filename=student.filename) }}">
+                    <strong>{{ student.name }}</strong>
+                </a>
+                {% if test_mode %}
+                <form action="{{ url_for('delete_student', filename=student.filename) }}" method="post">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <input type="hidden" name="next" value="index">
+                    <button
+                        type="submit"
+                        class="student-quick-delete"
+                        title="Удалить {{ student.name }}"
+                        aria-label="Удалить ученика {{ student.name }}"
+                    >×</button>
+                </form>
+                {% endif %}
+            </div>
             {% endfor %}
         </div>
         {% else %}

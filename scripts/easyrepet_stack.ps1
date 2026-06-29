@@ -415,6 +415,11 @@ function Stop-Flask {
     }
 }
 
+function Restart-Flask {
+    Stop-Flask
+    Start-Flask
+}
+
 function Stop-Speaches {
     Write-Section "Speaches Docker"
     if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
@@ -507,6 +512,7 @@ function Show-Menu {
         Write-Host ""
         Write-Host "EasyRepet"
         Write-Host "1. Start"
+        Write-Host "11. Restart Flask"
         Write-Host "2. Stop"
         Write-Host "3. Status"
         Write-Host "4. Open Browser"
@@ -515,6 +521,7 @@ function Show-Menu {
 
         switch ($choice) {
             "1" { Start-EasyRepet }
+            "11" { Restart-Flask }
             "2" { Stop-EasyRepet }
             "3" { Show-Status }
             "4" { Open-EasyRepet }
@@ -526,6 +533,7 @@ function Show-Menu {
 
 switch ($Action.ToLowerInvariant()) {
     "start" { Start-EasyRepet }
+    "restart-flask" { Restart-Flask }
     "stop" { Stop-EasyRepet }
     "status" { Show-Status }
     "open" { Open-EasyRepet }

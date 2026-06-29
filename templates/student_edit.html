@@ -2,64 +2,224 @@
 <html lang="ru">
 <head>
     <meta charset="utf-8">
-    <title>{{ student_name }}</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{ student_name }} — база знаний</title>
     <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <script>
+        window.MathJax = {
+            tex: {
+                inlineMath: [["\\(", "\\)"], ["$", "$"]],
+                displayMath: [["\\[", "\\]"], ["$$", "$$"]],
+                processEscapes: true,
+                tags: "ams"
+            },
+            options: {
+                skipHtmlTags: ["script", "noscript", "style", "textarea", "pre", "code"]
+            },
+            startup: {
+                typeset: false
+            }
+        };
+    </script>
+    <script defer src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"></script>
 </head>
 <body>
 <header class="topbar">
-    <div>
+    <div class="page-title-block">
+        <span class="page-eyebrow">База знаний ученика</span>
         <h1>{{ student_name }}</h1>
-        <p>Карточка ученика и ручная проверка новой версии</p>
+        <p>
+            {% if has_pending_proposal %}
+            Проверьте обновление перед сохранением
+            {% else %}
+            Актуальная информация для подготовки к занятиям
+            {% endif %}
+        </p>
     </div>
     <nav class="top-actions">
-        <a class="button secondary" href="{{ url_for('students') }}">Ученики</a>
+        <a class="button secondary" href="{{ url_for('students') }}">Все ученики</a>
         <a class="button secondary" href="{{ url_for('index') }}">Главная</a>
     </nav>
 </header>
 
-<main class="split-workspace">
-    {% if saved %}
-    <div class="notice wide">Сохранено.</div>
+<main class="knowledge-workspace">
+    {% if manage_error %}
+    <section class="knowledge-status is-error">
+        <span class="status-icon" aria-hidden="true">!</span>
+        <div>
+            <strong>Не удалось изменить карточку</strong>
+            <p>{{ manage_error }}</p>
+        </div>
+    </section>
+    {% endif %}
+    {% if renamed %}
+    <section class="knowledge-status is-ready">
+        <span class="status-icon" aria-hidden="true">✓</span>
+        <div>
+            <strong>Имя ученика изменено</strong>
+            <p>Карточка и ожидающее подтверждения обновление перенесены под новым именем.</p>
+        </div>
+    </section>
     {% endif %}
     {% if has_pending_proposal %}
-    <div class="notice wide">Есть новое предложение для базы знаний. Проверьте изменения и сохраните только после подтверждения.</div>
+    <section class="knowledge-status is-pending">
+        <span class="status-icon" aria-hidden="true">+</span>
+        <div>
+            <strong>База знаний обновлена</strong>
+            <p>Ниже — новая версия и все изменения, которые будут сохранены.</p>
+        </div>
+        <span class="status-badge">Ожидает подтверждения</span>
+    </section>
+
+    <div class="knowledge-layout">
+        <article class="document-shell knowledge-document">
+            <div class="document-heading">
+                <div>
+                    <span class="section-kicker">Обновлённая версия</span>
+                    <h2>База знаний</h2>
+                </div>
+                <span class="version-pill">Новая</span>
+            </div>
+            <div class="markdown-body">{{ rendered_proposed|safe }}</div>
+        </article>
+
+        <aside class="changes-card">
+            <div class="document-heading">
+                <div>
+                    <span class="section-kicker">Что изменилось</span>
+                    <h2>Добавления и правки</h2>
+                </div>
+            </div>
+            <div class="diff-view">{{ diff_html|safe }}</div>
+        </aside>
+    </div>
+
+    <form action="{{ url_for('save_student_proposed', filename=filename) }}" method="post" class="proposal-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <details class="proposal-editor">
+            <summary>
+                <span>
+                    <strong>Отредактировать обновление</strong>
+                    <small>Можно изменить любой текст перед сохранением</small>
+                </span>
+                <span class="editor-action">Открыть редактор</span>
+            </summary>
+            <label for="proposedContent">Текст обновлённой базы в Markdown</label>
+            <textarea id="proposedContent" name="proposed" spellcheck="true">{{ proposed }}</textarea>
+        </details>
+
+        <div class="knowledge-confirm">
+            <p><strong>Всё верно?</strong><span>После подтверждения эта версия станет основной.</span></p>
+            <button
+                type="submit"
+                class="secondary danger-button"
+                formaction="{{ url_for('reject_student_proposed', filename=filename) }}"
+                onclick="return confirm('Отклонить это обновление? Текущая база знаний останется без изменений.');"
+            >Отклонить</button>
+            <button type="submit">Сохранить и подтвердить</button>
+        </div>
+    </form>
+    {% else %}
+    {% if ai_error %}
+    <section class="knowledge-status is-error">
+        <span class="status-icon" aria-hidden="true">!</span>
+        <div>
+            <strong>Не удалось подготовить изменения</strong>
+            <p>{{ ai_error }}</p>
+        </div>
+    </section>
+    {% endif %}
+    {% if saved %}
+    <section class="knowledge-status is-ready">
+        <span class="status-icon" aria-hidden="true">✓</span>
+        <div>
+            <strong>База знаний готова</strong>
+            <p>Обновление подтверждено и сохранено.</p>
+        </div>
+        <span class="status-badge">Актуальная версия</span>
+    </section>
     {% endif %}
 
-    <section class="panel">
-        <h2>Текущая карточка</h2>
+    <article class="document-shell knowledge-document is-ready">
+        <div class="document-heading">
+            <div>
+                <span class="section-kicker">Актуальная версия</span>
+                <h2>База знаний</h2>
+            </div>
+            <span class="version-pill">Готово</span>
+        </div>
+        <div class="markdown-body">{{ rendered_content|safe }}</div>
+    </article>
+
+    <section class="ai-edit-card">
+        <div class="ai-edit-heading">
+            <span class="ai-mark" aria-hidden="true">9B</span>
+            <div>
+                <h2>Изменить с помощью ИИ</h2>
+                <p>Опишите обычными словами, что добавить, исправить или удалить.</p>
+            </div>
+        </div>
+        <form action="{{ url_for('ai_edit_student', filename=filename) }}" method="post" class="ai-edit-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <label for="aiInstruction">Инструкция для модели</label>
+            <textarea
+                id="aiInstruction"
+                name="instruction"
+                placeholder="Например: удали устаревшую рекомендацию про дроби и добавь, что ученик уверенно решает квадратные уравнения"
+                required
+            ></textarea>
+            <div class="ai-edit-actions">
+                <span>Модель получит всю текущую базу знаний в контексте.</span>
+                <button type="submit">Подготовить изменения</button>
+            </div>
+        </form>
+    </section>
+
+    <details class="manual-editor">
+        <summary>Редактировать вручную</summary>
         <form action="{{ url_for('student_card', filename=filename) }}" method="post" class="stack-form">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <textarea name="content" spellcheck="true">{{ content }}</textarea>
-            <button type="submit">Сохранить текущую карточку</button>
+            <button type="submit">Сохранить изменения</button>
         </form>
-    </section>
-
-    <section class="panel">
-        <h2>Предлагаемая новая версия</h2>
-        <form action="{{ url_for('student_diff', filename=filename) }}" method="post" class="stack-form">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <textarea name="proposed" spellcheck="true">{{ proposed }}</textarea>
-            <button type="submit">Показать изменения</button>
-        </form>
-    </section>
-
-    <section class="panel wide">
-        <h2>Просмотр</h2>
-        <div class="markdown-body">{{ rendered_content|safe }}</div>
-    </section>
-
-    {% if diff_html %}
-    <section class="panel wide">
-        <h2>Сравнение версий</h2>
-        <div class="diff-view">{{ diff_html|safe }}</div>
-        <form action="{{ url_for('save_student_proposed', filename=filename) }}" method="post">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <input type="hidden" name="proposed" value="{{ proposed }}">
-            <button type="submit">Сохранить предложенную версию</button>
-        </form>
-    </section>
+    </details>
     {% endif %}
+
+    <details class="student-management">
+        <summary>Управление учеником</summary>
+        <div class="student-management-actions">
+            <form action="{{ url_for('rename_student', filename=filename) }}" method="post" class="inline-form">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="text" name="student_name" value="{{ student_name }}" aria-label="Новое имя ученика" required>
+                <button type="submit" class="secondary">Изменить имя</button>
+            </form>
+            <form action="{{ url_for('delete_student', filename=filename) }}" method="post">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button
+                    type="submit"
+                    class="secondary danger-button"
+                    onclick="return confirm('Удалить ученика «{{ student_name }}» и его базу знаний? Это действие нельзя отменить.');"
+                >Удалить ученика</button>
+            </form>
+        </div>
+    </details>
 </main>
+<script>
+    window.addEventListener("load", () => {
+        if (window.MathJax && window.MathJax.typesetPromise) {
+            window.MathJax.typesetPromise();
+        }
+    });
+    document.querySelectorAll(".ai-edit-form").forEach((form) => {
+        form.addEventListener("submit", () => {
+            const button = form.querySelector("button[type='submit']");
+            if (button) {
+                button.disabled = true;
+                button.textContent = "Модель готовит версию…";
+            }
+        });
+    });
+</script>
 </body>
 </html>

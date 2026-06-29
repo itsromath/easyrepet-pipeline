@@ -173,6 +173,11 @@ def proposal_path_for_student(filename: str) -> Path:
     return ensure_student_proposals_dir() / filename
 
 
+def is_valid_student_proposal(content: str) -> bool:
+    text = content.strip()
+    return len(text) >= 50 and bool(re.search(r"^#\s+\S", text, flags=re.MULTILINE))
+
+
 def is_test_mode_enabled() -> bool:
     return session.get("test_mode") == "1"
 
@@ -659,6 +664,12 @@ def task_snapshot() -> Dict[str, object]:
             if readiness["ready"]
             else "; ".join(str(issue) for issue in readiness["issues"])
         )
+
+    status_text = str(data.get("status") or "").strip()
+    detail_text = str(data.get("stage_detail") or "").strip()
+    if status_text and detail_text.casefold().startswith(status_text.casefold()):
+        data["stage_detail"] = detail_text[len(status_text):].lstrip(" \t·—–-;:")
+
     return data
 
 
@@ -826,6 +837,13 @@ def safe_student_name(name: str) -> str:
     return f"{safe_name(stem)}.md"
 
 
+def update_student_heading(content: str, student_name: str) -> str:
+    heading = f"# {student_name}"
+    if re.search(r"^#\s+.*$", content, flags=re.MULTILINE):
+        return re.sub(r"^#\s+.*$", heading, content, count=1, flags=re.MULTILINE)
+    return f"{heading}\n\n{content.lstrip()}"
+
+
 def next_test_student_number() -> int:
     students_dir = ensure_students_dir()
     max_number = 0
@@ -909,6 +927,33 @@ def generate_student_knowledge_proposal(student_path: Path, report_path: Path) -
     proposed = proposed.strip()
     if len(proposed) < 200 or "# " not in proposed:
         raise RuntimeError("LLM вернула пустое или слишком короткое предложение для базы ученика.")
+    return proposed
+
+
+def generate_student_instruction_proposal(current_card: str, instruction: str) -> str:
+    config = load_config(CONFIG_PATH)
+    llm_config = config.get("llm", {})
+    user_prompt = f"""# Текущая база знаний
+
+{current_card}
+
+# Инструкция преподавателя
+
+{instruction}
+
+Верни только полную обновлённую базу знаний в Markdown.
+"""
+    proposed = call_lmstudio_chat(
+        "student_knowledge_edit_9b",
+        user_prompt,
+        base_url=str(llm_config.get("base_url", "http://127.0.0.1:1234/v1")),
+        api_key=str(llm_config.get("api_key", "local-key")),
+        timeout=900,
+    ).strip()
+    proposed = re.sub(r"^```(?:markdown|md)?\s*", "", proposed, flags=re.IGNORECASE)
+    proposed = re.sub(r"\s*```$", "", proposed).strip()
+    if len(proposed) < 50 or not re.search(r"^#\s+\S", proposed, flags=re.MULTILINE):
+        raise RuntimeError("Модель вернула пустую или некорректную версию базы знаний.")
     return proposed
 
 
@@ -1570,7 +1615,7 @@ def student_card(filename: str):
     content = read_markdown(path)
     pending_proposal_path = proposal_path_for_student(filename)
     pending_proposal = read_markdown(pending_proposal_path) if pending_proposal_path.exists() else ""
-    has_pending_proposal = len(pending_proposal.strip()) >= 200
+    has_pending_proposal = is_valid_student_proposal(pending_proposal)
     proposed = pending_proposal if has_pending_proposal else content
     return render_template(
         "student_edit.html",
@@ -1579,10 +1624,66 @@ def student_card(filename: str):
         content=content,
         proposed=proposed,
         rendered_content=render_markdown(content),
-        diff_html=None,
+        rendered_proposed=render_markdown(proposed),
+        diff_html=build_html_diff(content, proposed) if has_pending_proposal else None,
         has_pending_proposal=has_pending_proposal,
         saved=request.args.get("saved") == "1",
+        renamed=request.args.get("renamed") == "1",
+        manage_error=request.args.get("manage_error", ""),
+        ai_error=request.args.get("ai_error", ""),
     )
+
+
+@app.route("/students/<filename>/rename", methods=["POST"])
+def rename_student(filename: str):
+    filename = safe_student_name(filename)
+    path = ensure_students_dir() / filename
+    if not path.exists():
+        abort(404)
+
+    new_name = request.form.get("student_name", "").strip()
+    if not new_name:
+        return redirect(url_for("student_card", filename=filename, manage_error="Укажите новое имя ученика."))
+
+    new_filename = safe_student_name(new_name)
+    new_path = ensure_students_dir() / new_filename
+    if new_path != path and new_path.exists():
+        return redirect(url_for(
+            "student_card",
+            filename=filename,
+            manage_error="Ученик с таким именем уже существует.",
+        ))
+
+    display_name = new_path.stem
+    write_markdown(path, update_student_heading(read_markdown(path), display_name))
+    if new_path != path:
+        path.rename(new_path)
+
+    old_proposal = proposal_path_for_student(filename)
+    new_proposal = proposal_path_for_student(new_filename)
+    if old_proposal.exists():
+        proposal_content = update_student_heading(read_markdown(old_proposal), display_name)
+        write_markdown(old_proposal, proposal_content)
+        if new_proposal != old_proposal:
+            old_proposal.rename(new_proposal)
+
+    return redirect(url_for("student_card", filename=new_filename, renamed="1"))
+
+
+@app.route("/students/<filename>/delete", methods=["POST"])
+def delete_student(filename: str):
+    filename = safe_student_name(filename)
+    path = ensure_students_dir() / filename
+    if not path.exists():
+        abort(404)
+
+    path.unlink()
+    pending_proposal_path = proposal_path_for_student(filename)
+    if pending_proposal_path.exists():
+        pending_proposal_path.unlink()
+    if request.form.get("next") == "index":
+        return redirect(url_for("index"))
+    return redirect(url_for("students", deleted="1"))
 
 
 @app.route("/students/<filename>/diff", methods=["POST"])
@@ -1600,10 +1701,38 @@ def student_diff(filename: str):
         content=old_content,
         proposed=proposed,
         rendered_content=render_markdown(old_content),
+        rendered_proposed=render_markdown(proposed),
         diff_html=build_html_diff(old_content, proposed),
-        has_pending_proposal=len(pending_proposal.strip()) >= 200,
+        has_pending_proposal=is_valid_student_proposal(pending_proposal),
         saved=False,
+        renamed=False,
+        manage_error="",
+        ai_error="",
     )
+
+
+@app.route("/students/<filename>/ai_edit", methods=["POST"])
+def ai_edit_student(filename: str):
+    filename = safe_student_name(filename)
+    path = ensure_students_dir() / filename
+    if not path.exists():
+        abort(404)
+
+    instruction = request.form.get("instruction", "").strip()
+    if len(instruction) < 3:
+        return redirect(url_for(
+            "student_card",
+            filename=filename,
+            ai_error="Напишите, что нужно изменить в базе знаний.",
+        ))
+
+    try:
+        proposed = generate_student_instruction_proposal(read_markdown(path), instruction)
+        proposal_path_for_student(filename).write_text(proposed + "\n", encoding="utf-8")
+    except Exception as exc:
+        return redirect(url_for("student_card", filename=filename, ai_error=str(exc)))
+
+    return redirect(url_for("student_card", filename=filename))
 
 
 @app.route("/students/<filename>/save_proposed", methods=["POST"])
@@ -1616,6 +1745,15 @@ def save_student_proposed(filename: str):
     if pending_proposal_path.exists():
         pending_proposal_path.unlink()
     return redirect(url_for("student_card", filename=filename, saved="1"))
+
+
+@app.route("/students/<filename>/reject_proposed", methods=["POST"])
+def reject_student_proposed(filename: str):
+    filename = safe_student_name(filename)
+    pending_proposal_path = proposal_path_for_student(filename)
+    if pending_proposal_path.exists():
+        pending_proposal_path.unlink()
+    return redirect(url_for("student_card", filename=filename))
 
 
 @app.route("/api/status")

@@ -16,6 +16,9 @@
 </header>
 
 <main class="single">
+    {% if request.args.get("deleted") == "1" %}
+    <p class="notice">Карточка ученика удалена.</p>
+    {% endif %}
     <section class="panel">
         <h2>Новая карточка</h2>
         <form action="{{ url_for('students') }}" method="post" class="inline-form">
