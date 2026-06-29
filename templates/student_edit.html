@@ -186,6 +186,29 @@
     </details>
     {% endif %}
 
+    {% if lessons %}
+    <section class="panel lesson-history">
+        <div class="section-heading">
+            <h2>История занятий</h2>
+            <span class="version-pill">{{ lessons|length }}</span>
+        </div>
+        <div class="lesson-history-list">
+            {% for lesson in lessons %}
+            <div class="lesson-history-item">
+                <div>
+                    <strong>{{ lesson.transcript }}</strong>
+                    <span>{{ lesson.created }}</span>
+                </div>
+                <a
+                    class="button tiny secondary"
+                    href="{{ url_for('view_output', folder=lesson.report_folder, filename=lesson.report_filename) }}"
+                >Открыть отчёт</a>
+            </div>
+            {% endfor %}
+        </div>
+    </section>
+    {% endif %}
+
     <details class="student-management">
         <summary>Управление учеником</summary>
         <div class="student-management-actions">

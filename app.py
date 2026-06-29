@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import secrets
 import shutil
@@ -168,14 +169,30 @@ def ensure_student_proposals_dir() -> Path:
     return proposals_dir
 
 
+def ensure_student_history_dir() -> Path:
+    history_dir = ensure_students_dir() / "_history"
+    history_dir.mkdir(parents=True, exist_ok=True)
+    return history_dir
+
+
 def proposal_path_for_student(filename: str) -> Path:
     filename = safe_student_name(filename)
     return ensure_student_proposals_dir() / filename
 
 
+def history_path_for_student(filename: str) -> Path:
+    filename = safe_student_name(filename)
+    return ensure_student_history_dir() / f"{Path(filename).stem}.json"
+
+
 def is_valid_student_proposal(content: str) -> bool:
     text = content.strip()
-    return len(text) >= 50 and bool(re.search(r"^#\s+\S", text, flags=re.MULTILINE))
+    has_title = bool(re.search(r"^#\s+\S", text, flags=re.MULTILINE))
+    has_content = any(
+        line.strip() and not line.lstrip().startswith("#")
+        for line in text.splitlines()
+    )
+    return has_title and has_content
 
 
 def is_test_mode_enabled() -> bool:
@@ -711,10 +728,12 @@ def run_audio_transcription(
     output_name: str,
     process_after: bool,
     force: bool,
-    create_test_student: bool = False,
+    student_filename: str = "",
 ) -> None:
     audio_path = Path(audio_path_text)
     output_stem = safe_transcript_stem(output_name) if output_name else short_transcript_stem(audio_path.stem)
+    transcript_created = False
+    report_created = False
 
     with task_lock:
         apply_task_update({
@@ -783,6 +802,7 @@ def run_audio_transcription(
             whisper_config=whisper_config,
             progress_callback=whisper_progress,
         )
+        transcript_created = True
 
         text = response.get("text", "") if isinstance(response, dict) else str(response)
         status = f"Транскрипция готова: {md_path.name}"
@@ -799,10 +819,13 @@ def run_audio_transcription(
                     "service": "pipeline",
             })
             pipeline = make_pipeline(make_task_progress_callback(md_path.name))
-            final_path = pipeline.process_file(md_path, force=force)
-            if create_test_student and final_path and final_path.exists():
-                student_path = create_test_student_proposal(md_path.name, final_path)
-                status += f"; тестовый ученик: {student_path.stem}"
+            student_path = ensure_students_dir() / safe_student_name(student_filename) if student_filename else None
+            student_card = read_markdown(student_path) if student_path and student_path.exists() else ""
+            final_path = pipeline.process_file(md_path, force=force, student_card=student_card)
+            report_created = bool(final_path and final_path.exists())
+            if student_path and final_path and final_path.exists():
+                create_student_knowledge_proposal(student_path, md_path.name, final_path)
+                status += f"; база ученика: {student_path.stem}"
             status += "; отчёт создан"
 
         with task_lock:
@@ -817,15 +840,24 @@ def run_audio_transcription(
                 "service": "pipeline",
             })
     except Exception as exc:
+        if report_created and student_filename:
+            error_status = "Отчёт создан, но база ученика не обновлена"
+            error_service = "lmstudio"
+        elif transcript_created:
+            error_status = "Транскрипт создан, но не удалось подготовить отчёт"
+            error_service = "lmstudio"
+        else:
+            error_status = "Ошибка транскрипции Speaches"
+            error_service = "speaches"
         with task_lock:
             apply_task_update({
                 "running": False,
                 "finished_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "status": "Ошибка транскрипции Speaches",
+                "status": error_status,
                 "stage": "error",
                 "stage_label": "Ошибка",
                 "stage_detail": str(exc),
-                "service": "speaches",
+                "service": error_service,
                 "error": str(exc),
             })
 
@@ -842,6 +874,107 @@ def update_student_heading(content: str, student_name: str) -> str:
     if re.search(r"^#\s+.*$", content, flags=re.MULTILINE):
         return re.sub(r"^#\s+.*$", heading, content, count=1, flags=re.MULTILINE)
     return f"{heading}\n\n{content.lstrip()}"
+
+
+def build_initial_student_card(student_name: str) -> str:
+    return f"""# {student_name}
+
+## Что важно знать
+
+Карточка создана. Наблюдения появятся после обработки первого занятия.
+
+## Темы и навыки
+
+## Самостоятельность
+
+## Что даётся легко
+
+## Что даётся сложно
+
+## Реакция на подсказки
+
+## Что проверить на следующем занятии
+
+## Рекомендации для следующего занятия
+"""
+
+
+def create_student_card(student_name: str) -> Path:
+    filename = safe_student_name(student_name)
+    path = ensure_students_dir() / filename
+    if path.exists():
+        raise ValueError("Ученик с таким именем уже существует.")
+    write_markdown(path, build_initial_student_card(path.stem))
+    return path
+
+
+def resolve_student_selection(student_filename: str, new_student_name: str) -> Path | None:
+    if student_filename == "__new__":
+        name = new_student_name.strip()
+        if not name:
+            raise ValueError("Укажите имя нового ученика.")
+        return create_student_card(name)
+    if not student_filename:
+        return None
+
+    filename = safe_student_name(student_filename)
+    path = ensure_students_dir() / filename
+    if not path.exists():
+        raise ValueError("Выбранная карточка ученика не найдена.")
+    pending_path = proposal_path_for_student(filename)
+    if pending_path.exists() and is_valid_student_proposal(read_markdown(pending_path)):
+        raise ValueError(
+            "У этого ученика уже есть неподтверждённое обновление. "
+            "Сначала сохраните или отклоните его в карточке ученика."
+        )
+    return path
+
+
+def record_student_lesson(student_path: Path, transcript_name: str, report_path: Path) -> None:
+    history_path = history_path_for_student(student_path.name)
+    lessons: list[Dict[str, str]] = []
+    if history_path.exists():
+        try:
+            loaded = json.loads(history_path.read_text(encoding="utf-8"))
+            if isinstance(loaded, list):
+                lessons = [item for item in loaded if isinstance(item, dict)]
+        except (OSError, json.JSONDecodeError):
+            lessons = []
+
+    lesson = {
+        "transcript": transcript_name,
+        "report_folder": report_path.parent.name,
+        "report_filename": report_path.name,
+        "created": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    }
+    lessons = [
+        item
+        for item in lessons
+        if item.get("report_folder") != lesson["report_folder"]
+        or item.get("report_filename") != lesson["report_filename"]
+    ]
+    lessons.append(lesson)
+    history_path.write_text(
+        json.dumps(lessons, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
+def list_student_lessons(filename: str) -> list[Dict[str, str]]:
+    history_path = history_path_for_student(filename)
+    if not history_path.exists():
+        return []
+    try:
+        loaded = json.loads(history_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    if not isinstance(loaded, list):
+        return []
+    return sorted(
+        (item for item in loaded if isinstance(item, dict)),
+        key=lambda item: item.get("created", ""),
+        reverse=True,
+    )
 
 
 def next_test_student_number() -> int:
@@ -917,17 +1050,61 @@ def generate_student_knowledge_proposal(student_path: Path, report_path: Path) -
 
 Создай предложенную новую версию базы ученика. Верни только полный Markdown новой карточки.
 """
-    proposed = call_lmstudio_chat(
+    proposed_raw = call_lmstudio_chat(
         "student_knowledge_9b",
         user_prompt,
         base_url=str(llm_config.get("base_url", "http://127.0.0.1:1234/v1")),
         api_key=str(llm_config.get("api_key", "local-key")),
         timeout=900,
     )
-    proposed = proposed.strip()
-    if len(proposed) < 200 or "# " not in proposed:
-        raise RuntimeError("LLM вернула пустое или слишком короткое предложение для базы ученика.")
+    diagnostic_path = report_path.with_name(
+        f"{report_path.stem.removesuffix('_final')}_student_knowledge_raw.md"
+    )
+    diagnostic_path.write_text(proposed_raw, encoding="utf-8")
+
+    proposed = proposed_raw.strip()
+    proposed = re.sub(r"^```(?:markdown|md)?\s*", "", proposed, flags=re.IGNORECASE)
+    proposed = re.sub(r"\s*```$", "", proposed).strip()
+    logging.info(
+        "Ответ модели для базы ученика: %s символов; диагностика: %s",
+        len(proposed),
+        diagnostic_path,
+    )
+
+    if is_valid_student_proposal(proposed):
+        return proposed
+
+    logging.warning(
+        "Ответ модели для базы ученика пуст или не содержит корректный H1; "
+        "создаю безопасный черновик из готового отчёта."
+    )
+    proposed = build_student_proposal_fallback(current_card, report, report_path)
+    if not is_valid_student_proposal(proposed):
+        raise RuntimeError("Не удалось подготовить корректное предложение для базы ученика.")
     return proposed
+
+
+def build_student_proposal_fallback(current_card: str, report: str, report_path: Path) -> str:
+    update_match = re.search(
+        r"^##\s+11\.\s+.*?\n(?P<body>.*?)(?=^##\s+12\.|\Z)",
+        report,
+        flags=re.MULTILINE | re.DOTALL,
+    )
+    update_text = update_match.group("body").strip() if update_match else ""
+    if not update_text:
+        update_text = (
+            "Автоматическое обновление не сформировано моделью. "
+            "Проверьте готовый отчёт и при необходимости дополните карточку вручную."
+        )
+
+    base = current_card.strip()
+    source_section = f"""## Наблюдения из занятия
+
+Источник: `{report_path.name}`
+
+{update_text}
+"""
+    return f"{base}\n\n{source_section}".strip()
 
 
 def generate_student_instruction_proposal(current_card: str, instruction: str) -> str:
@@ -959,6 +1136,15 @@ def generate_student_instruction_proposal(current_card: str, instruction: str) -
 
 def create_test_student_proposal(source_name: str, report_path: Path) -> Path:
     student_path = create_test_student_card(source_name, report_path)
+    create_student_knowledge_proposal(student_path, source_name, report_path)
+    return student_path
+
+
+def create_student_knowledge_proposal(
+    student_path: Path,
+    source_name: str,
+    report_path: Path,
+) -> Path:
     update_task_stage(
         "llm_9b",
         "LLM 9B",
@@ -966,6 +1152,7 @@ def create_test_student_proposal(source_name: str, report_path: Path) -> Path:
         "lmstudio",
         workflow="report",
     )
+    record_student_lesson(student_path, source_name, report_path)
     proposed = generate_student_knowledge_proposal(student_path, report_path)
     proposal_path_for_student(student_path.name).write_text(proposed + "\n", encoding="utf-8")
     return student_path
@@ -1017,7 +1204,7 @@ def read_log_tail(limit: int = 300) -> str:
     return "\n".join(content.splitlines()[-limit:])
 
 
-def run_processing(target_file: Optional[str], force: bool, create_test_student: bool = False) -> None:
+def run_processing(target_file: Optional[str], force: bool, student_filename: str = "") -> None:
     with task_lock:
         apply_task_update({
             "running": True,
@@ -1042,17 +1229,17 @@ def run_processing(target_file: Optional[str], force: bool, create_test_student:
             with task_lock:
                 current_task["status"] = f"Обрабатывается файл: {transcript_path.name}"
                 current_task["stage_detail"] = transcript_path.name
-            final_path = pipeline.process_file(transcript_path, force=force)
-            if create_test_student and final_path and final_path.exists():
-                create_test_student_proposal(transcript_path.name, final_path)
+            student_path = ensure_students_dir() / safe_student_name(student_filename) if student_filename else None
+            student_card = read_markdown(student_path) if student_path and student_path.exists() else ""
+            final_path = pipeline.process_file(transcript_path, force=force, student_card=student_card)
+            if student_path and final_path and final_path.exists():
+                create_student_knowledge_proposal(student_path, transcript_path.name, final_path)
         else:
             with task_lock:
                 current_task["status"] = "Обрабатываются все новые транскрипты"
                 current_task["stage_detail"] = "Все новые транскрипты"
             for transcript_path in pipeline.iter_transcripts():
                 final_path = pipeline.process_file(transcript_path, force=force)
-                if create_test_student and final_path and final_path.exists():
-                    create_test_student_proposal(transcript_path.name, final_path)
 
         with task_lock:
             apply_task_update({
@@ -1222,11 +1409,6 @@ def transcribe_audio_route():
             return redirect(url_for("index"))
 
     process_after = request.form.get("process_after") == "on"
-    create_test_student = (
-        is_test_mode_enabled()
-        and process_after
-        and request.form.get("create_test_student") == "on"
-    )
     readiness = build_readiness_snapshot(force=True)
     if process_after and not can_analyze(readiness):
         block_task(
@@ -1283,10 +1465,20 @@ def transcribe_audio_route():
 
     output_name = request.form.get("output_name", "")
     force = request.form.get("force") == "on"
+    student_path = None
+    if process_after:
+        try:
+            student_path = resolve_student_selection(
+                request.form.get("student_filename", ""),
+                request.form.get("new_student_name", ""),
+            )
+        except ValueError as exc:
+            block_task("Не выбран ученик", str(exc), service="students", workflow="audio_report")
+            return redirect(url_for("index"))
 
     thread = threading.Thread(
         target=run_audio_transcription,
-        args=(str(audio_path), output_name, process_after, force, create_test_student),
+        args=(str(audio_path), output_name, process_after, force, student_path.name if student_path else ""),
         daemon=True,
     )
     thread.start()
@@ -1297,10 +1489,6 @@ def transcribe_audio_route():
 def process():
     target_file = request.form.get("target_file") or None
     force = request.form.get("force") == "on"
-    create_test_student = (
-        is_test_mode_enabled()
-        and request.form.get("create_test_student") == "on"
-    )
 
     with task_lock:
         if current_task.get("running"):
@@ -1316,7 +1504,30 @@ def process():
         )
         return redirect(url_for("index"))
 
-    thread = threading.Thread(target=run_processing, args=(target_file, force, create_test_student), daemon=True)
+    requested_student = request.form.get("student_filename", "")
+    if requested_student and not target_file:
+        block_task(
+            "Выберите один транскрипт",
+            "Нельзя привязать пакетную обработку нескольких транскриптов к одному ученику.",
+            service="students",
+            workflow="report",
+        )
+        return redirect(url_for("index"))
+
+    try:
+        student_path = resolve_student_selection(
+            requested_student,
+            request.form.get("new_student_name", ""),
+        )
+    except ValueError as exc:
+        block_task("Не выбран ученик", str(exc), service="students", workflow="report")
+        return redirect(url_for("index"))
+
+    thread = threading.Thread(
+        target=run_processing,
+        args=(target_file, force, student_path.name if student_path else ""),
+        daemon=True,
+    )
     thread.start()
     return redirect(url_for("index"))
 
@@ -1340,7 +1551,21 @@ def create_test_student_from_report():
         return redirect(url_for("index") + "#final-reports")
 
     try:
-        student_path = create_test_student_proposal(folder, path)
+        student_path = resolve_student_selection(
+            request.form.get("student_filename", ""),
+            request.form.get("new_student_name", ""),
+        )
+        if student_path is None:
+            raise ValueError("Выберите существующего ученика или создайте нового.")
+        create_student_knowledge_proposal(student_path, folder, path)
+    except ValueError as exc:
+        block_task(
+            "Не выбран ученик",
+            str(exc),
+            service="students",
+            workflow="report",
+        )
+        return redirect(url_for("index") + "#final-reports")
     except Exception as exc:
         update_task_stage(
             "error",
@@ -1626,6 +1851,7 @@ def student_card(filename: str):
         rendered_content=render_markdown(content),
         rendered_proposed=render_markdown(proposed),
         diff_html=build_html_diff(content, proposed) if has_pending_proposal else None,
+        lessons=list_student_lessons(filename),
         has_pending_proposal=has_pending_proposal,
         saved=request.args.get("saved") == "1",
         renamed=request.args.get("renamed") == "1",
@@ -1667,6 +1893,11 @@ def rename_student(filename: str):
         if new_proposal != old_proposal:
             old_proposal.rename(new_proposal)
 
+    old_history = history_path_for_student(filename)
+    new_history = history_path_for_student(new_filename)
+    if old_history.exists() and new_history != old_history:
+        old_history.rename(new_history)
+
     return redirect(url_for("student_card", filename=new_filename, renamed="1"))
 
 
@@ -1681,6 +1912,9 @@ def delete_student(filename: str):
     pending_proposal_path = proposal_path_for_student(filename)
     if pending_proposal_path.exists():
         pending_proposal_path.unlink()
+    history_path = history_path_for_student(filename)
+    if history_path.exists():
+        history_path.unlink()
     if request.form.get("next") == "index":
         return redirect(url_for("index"))
     return redirect(url_for("students", deleted="1"))
@@ -1703,6 +1937,7 @@ def student_diff(filename: str):
         rendered_content=render_markdown(old_content),
         rendered_proposed=render_markdown(proposed),
         diff_html=build_html_diff(old_content, proposed),
+        lessons=list_student_lessons(filename),
         has_pending_proposal=is_valid_student_proposal(pending_proposal),
         saved=False,
         renamed=False,

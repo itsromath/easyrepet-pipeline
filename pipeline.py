@@ -500,7 +500,13 @@ class LessonPipeline:
             "llm_transcript": lesson_dir / f"{stem}_llm_transcript.txt",
         }
 
-    def process_file(self, transcript_path: Path, *, force: bool = False) -> Optional[Path]:
+    def process_file(
+        self,
+        transcript_path: Path,
+        *,
+        force: bool = False,
+        student_card: str = "",
+    ) -> Optional[Path]:
         output_paths = self.get_output_paths(transcript_path)
         final_path = output_paths["final"]
 
@@ -537,7 +543,6 @@ class LessonPipeline:
         llm_transcript = build_llm_transcript(transcript_path, transcript, self.transcript_cleaning)
         if not llm_transcript.strip():
             llm_transcript = transcript
-
         output_paths["dir"].mkdir(parents=True, exist_ok=True)
         output_paths["source_copy"].write_text(transcript, encoding="utf-8")
         output_paths["llm_transcript"].write_text(llm_transcript, encoding="utf-8")
@@ -567,6 +572,7 @@ class LessonPipeline:
         review = self.review_summary(
             llm_transcript,
             summary,
+            student_card=student_card,
             lesson_context=f"Файл транскрипции: {transcript_path.name}",
         )
         output_paths["review"].write_text(review, encoding="utf-8")

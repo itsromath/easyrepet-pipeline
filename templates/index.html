@@ -30,6 +30,26 @@
     {% set recordings_list = anythingllm_recordings|default([]) %}
     {% set downloads_list = download_audio_files|default([]) %}
     {% set stage = task.stage|default("idle") %}
+    {% macro student_picker(prefix) %}
+    <fieldset class="student-picker">
+        <legend>Ученик</legend>
+        <label>
+            Карточка ученика
+            <select name="student_filename" data-student-picker="{{ prefix }}">
+                <option value="">Без привязки к ученику</option>
+                {% for student in students_list %}
+                <option value="{{ student.filename }}">{{ student.name }}</option>
+                {% endfor %}
+                <option value="__new__">+ Новый ученик</option>
+            </select>
+        </label>
+        <label class="new-student-name" data-new-student-name="{{ prefix }}" hidden>
+            Имя нового ученика
+            <input type="text" name="new_student_name" placeholder="Например: Анна">
+        </label>
+        <p class="hint">После отчёта система подготовит обновление выбранной базы знаний.</p>
+    </fieldset>
+    {% endmacro %}
 
     <section class="status-strip wide" aria-live="polite">
         <div class="status-main">
@@ -109,17 +129,12 @@
                 <input id="audioOutputName" type="text" name="output_name" placeholder="например: youtube_8_class_lesson_01" data-suggestion-target>
             </label>
 
+            {{ student_picker("audio") }}
+
             <label class="checkbox">
                 <input type="checkbox" name="process_after" checked data-process-after>
                 <span>Сразу создать отчёт после транскрипции</span>
             </label>
-
-            {% if test_mode %}
-            <label class="checkbox">
-                <input type="checkbox" name="create_test_student" checked>
-                <span>Создать нового тестового ученика и черновик базы знаний</span>
-            </label>
-            {% endif %}
 
             <label class="checkbox">
                 <input type="checkbox" name="force">
@@ -179,17 +194,12 @@
                 </select>
             </label>
 
+            {{ student_picker("report") }}
+
             <label class="checkbox">
                 <input type="checkbox" name="force">
                 <span>Перегенерировать готовые отчёты</span>
             </label>
-
-            {% if test_mode %}
-            <label class="checkbox">
-                <input type="checkbox" name="create_test_student" checked>
-                <span>Создать нового тестового ученика для каждого отчета</span>
-            </label>
-            {% endif %}
 
             <button type="submit" data-requires-analyze {% if task.running or not task.can_analyze %}disabled{% endif %}>Создать отчёт</button>
         </form>
@@ -225,7 +235,7 @@
         <div class="section-heading">
             <h2>Финальный отчёт</h2>
         </div>
-        {% set ns = namespace(has_final=false) %}
+        {% set ns = namespace(has_final=false, picker=0) %}
         <div class="table-wrap">
             <table class="report-table">
                 <thead>
@@ -240,6 +250,7 @@
                 {% for folder in outputs_list %}
                     {% for file in folder.final_files %}
                     {% set ns.has_final = true %}
+                    {% set ns.picker = ns.picker + 1 %}
                     <tr>
                         <td class="strong-cell">{{ folder.name }}</td>
                         <td>{{ file.name }}</td>
@@ -249,12 +260,50 @@
                                 <a class="button tiny secondary" href="{{ url_for('view_output', folder=folder.name, filename=file.name) }}">Смотреть</a>
                                 <a class="button tiny" href="{{ url_for('edit_report', folder=folder.name, filename=file.name) }}">Редактировать</a>
                                 {% if test_mode %}
-                                <form action="{{ url_for('create_test_student_from_report') }}" method="post" class="row-action-form">
-                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                                    <input type="hidden" name="folder" value="{{ folder.name }}">
-                                    <input type="hidden" name="filename" value="{{ file.name }}">
-                                    <button class="tiny secondary" type="submit" {% if task.running or not task.can_analyze %}disabled{% endif %}>База</button>
-                                </form>
+                                <button
+                                    type="button"
+                                    class="tiny secondary"
+                                    data-open-student-dialog="student-dialog-{{ ns.picker }}"
+                                >База</button>
+                                <dialog id="student-dialog-{{ ns.picker }}" class="student-dialog">
+                                    <form action="{{ url_for('create_test_student_from_report') }}" method="post">
+                                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                        <input type="hidden" name="folder" value="{{ folder.name }}">
+                                        <input type="hidden" name="filename" value="{{ file.name }}">
+                                        <div class="student-dialog-heading">
+                                            <div>
+                                                <span class="section-kicker">Добавить в базу</span>
+                                                <h2>{{ folder.name }}</h2>
+                                            </div>
+                                            <button
+                                                type="button"
+                                                class="dialog-close"
+                                                data-close-student-dialog
+                                                aria-label="Закрыть"
+                                            >×</button>
+                                        </div>
+                                        <label>
+                                            Ученик
+                                            <select name="student_filename" data-student-picker="saved-report-{{ ns.picker }}" required>
+                                                <option value="">Выберите ученика</option>
+                                                {% for student in students_list %}
+                                                <option value="{{ student.filename }}">{{ student.name }}</option>
+                                                {% endfor %}
+                                                <option value="__new__">+ Новый ученик</option>
+                                            </select>
+                                        </label>
+                                        <label data-new-student-name="saved-report-{{ ns.picker }}" hidden>
+                                            Имя нового ученика
+                                            <input type="text" name="new_student_name" placeholder="Например: Анна">
+                                        </label>
+                                        <div class="student-dialog-actions">
+                                            <button type="button" class="secondary" data-close-student-dialog>Отмена</button>
+                                            <button type="submit" {% if task.running or not task.can_analyze %}disabled{% endif %}>
+                                                Добавить отчёт в базу
+                                            </button>
+                                        </div>
+                                    </form>
+                                </dialog>
                                 {% endif %}
                             </div>
                         </td>

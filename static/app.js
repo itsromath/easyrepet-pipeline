@@ -261,3 +261,44 @@ if (document.getElementById("logContent")) {
 }
 
 setupTranscriptSuggestions();
+
+document.querySelectorAll("[data-student-picker]").forEach((select) => {
+    const nameField = document.querySelector(
+        `[data-new-student-name="${select.dataset.studentPicker}"]`
+    );
+    if (!nameField) {
+        return;
+    }
+    const input = nameField.querySelector("input");
+    const refreshStudentPicker = () => {
+        const isNew = select.value === "__new__";
+        nameField.hidden = !isNew;
+        if (input) {
+            input.required = isNew;
+            if (isNew) {
+                input.focus();
+            }
+        }
+    };
+    select.addEventListener("change", refreshStudentPicker);
+    refreshStudentPicker();
+});
+
+document.querySelectorAll("[data-open-student-dialog]").forEach((button) => {
+    const dialog = document.getElementById(button.dataset.openStudentDialog);
+    if (!dialog) {
+        return;
+    }
+    button.addEventListener("click", () => dialog.showModal());
+});
+
+document.querySelectorAll(".student-dialog").forEach((dialog) => {
+    dialog.querySelectorAll("[data-close-student-dialog]").forEach((button) => {
+        button.addEventListener("click", () => dialog.close());
+    });
+    dialog.addEventListener("click", (event) => {
+        if (event.target === dialog) {
+            dialog.close();
+        }
+    });
+});
